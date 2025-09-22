@@ -714,8 +714,8 @@
                 $due_report_active = DB::table('permissions')
                         ->join('role_has_permissions', 'permissions.id', '=', 'role_has_permissions.permission_id')
                         ->where([
-                        ['permissions.name', 'due-report'],
-                        ['role_id', $role->id]
+                            ['permissions.name', 'due-report'],
+                            ['role_id', $role->id]
                 ])->first();
                 $supplier_due_report_active = DB::table('permissions')
                         ->join('role_has_permissions', 'permissions.id', '=', 'role_has_permissions.permission_id')
@@ -830,6 +830,9 @@
                     <a id="all-due-report-link" href="{{route('report.allDueReports')}}">{{trans('file.All Due Reports')}}</a>
                 </li>
                 @endif
+                <li id="tax-report-menu">
+                    <a id="tax-report-link" href="{{route('report.taxReport')}}">{{trans('file.Tax Report')}}</a>
+                </li>
                 @if($supplier_report_active)
                 <li id="supplier-report-menu">
                     <a id="supplier-report-link" href="">{{trans('file.Supplier Report')}}</a>

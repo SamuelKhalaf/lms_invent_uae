@@ -786,7 +786,7 @@
 
     function validatePriceBeforeUpdate(product_id, unit_price, callback) {
         $.ajax({
-            url: '../validate-single-price',
+            url: '{{ route("sale.validate-single-price") }}',
             type: 'POST',
             data: {
                 product_id: product_id,
@@ -815,7 +815,7 @@
 
     function validatePriceRealTime(product_id, unit_price) {
         $.ajax({
-            url: '../validate-single-price',
+            url: '{{ route("sale.validate-single-price") }}',
             type: 'POST',
             data: {
                 product_id: product_id,

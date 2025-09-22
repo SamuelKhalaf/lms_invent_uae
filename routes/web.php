@@ -232,6 +232,8 @@ Route::group(['middleware' => ['common', 'auth', 'active']], function() {
 	Route::post('report/supplier-due-report', 'ReportController@supplierDueReportByDate')->name('report.supplierDueByDate');
 	Route::get('report/all-due-reports', 'ReportController@allDueReports')->name('report.allDueReports');
 	Route::post('report/all-due-reports', 'ReportController@allDueReports')->name('report.allDueReports.post');
+	Route::get('report/tax-report', 'ReportController@taxReport')->name('report.taxReport');
+	Route::post('report/tax-report', 'ReportController@taxReport')->name('report.taxReport.post');
 
 	Route::get('user/profile/{id}', 'UserController@profile')->name('user.profile');
 	Route::put('user/update_profile/{id}', 'UserController@profileUpdate')->name('user.profileUpdate');

@@ -679,5 +679,12 @@ return [
 	"Returned Amount" => "Returned Amount",
 	"Related Transaction" => "Related Transaction",
 	"Product" => "Product",
+	"Tax Report" => "Tax Report",
+	"Tax Type" => "Tax Type",
+	"Sales Tax" => "Sales Tax",
+	"Purchase Tax" => "Purchase Tax",
+	"Sales Tax Transactions" => "Sales Tax Transactions",
+	"Purchase Tax Transactions" => "Purchase Tax Transactions",
+	"Total Tax" => "Total Tax",
 ];
 ?>

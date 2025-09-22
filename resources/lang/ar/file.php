@@ -617,5 +617,12 @@ return [
 	"Set minimum price to prevent selling below this amount" => "أقل سعر لمنع البيع بأقل من هذا المبلغ",
 	"Price below minimum not allowed" => "السعر أقل من الحد الأدنى غير مسموح",
 	"The selling price cannot be lower than the minimum price set for this product" => "لا يمكن أن يكون سعر البيع أقل من الحد الأدنى المحدد لهذا المنتج",
+	"Tax Report" => "تقرير الضرائب",
+	"Tax Type" => "نوع الضريبة",
+	"Sales Tax" => "ضريبة المبيعات",
+	"Purchase Tax" => "ضريبة المشتريات",
+	"Sales Tax Transactions" => "معاملات ضريبة المبيعات",
+	"Purchase Tax Transactions" => "معاملات ضريبة المشتريات",
+	"Total Tax" => "إجمالي الضريبة",
 ];
 ?>

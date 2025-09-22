@@ -17,6 +17,8 @@ use App\ReturnPurchase;
 use App\ProductTransfer;
 use App\PurchaseProductReturn;
 use App\Payment;
+use App\Account;
+use App\Tax;
 use App\Warehouse;
 use App\Customer;
 use App\Product_Warehouse;
@@ -1933,7 +1935,122 @@ class ReportController extends Controller
         
         $lims_sale_data = $q->get();
         $lims_customer_list = Customer::where('is_active', true)->get();
+        $lims_account_list = Account::where('is_active', true)->get();
         
-        return view('backend.report.all_due_reports', compact('lims_sale_data', 'customer_id', 'lims_customer_list'));
+        return view('backend.report.all_due_reports', compact('lims_sale_data', 'customer_id', 'lims_customer_list', 'lims_account_list'));
+    }
+
+    public function taxReport(Request $request)
+    {
+        $data = $request->all();
+        $start_date = $data['start_date'] ?? date('Y-m-01');
+        $end_date = $data['end_date'] ?? date('Y-m-d');
+        $warehouse_id = $data['warehouse_id'] ?? 0;
+        $tax_type = $data['tax_type'] ?? 'all'; // all, sales, purchases
+        
+        // Get sales tax data - only rows with tax
+        $sales_tax_query = Sale::whereDate('created_at', '>=', $start_date)
+            ->whereDate('created_at', '<=', $end_date)
+            ->where(function($query) {
+                $query->where('total_tax', '>', 0)
+                      ->orWhere('order_tax', '>', 0);
+            });
+        
+        if($warehouse_id != 0) {
+            $sales_tax_query->where('warehouse_id', $warehouse_id);
+        }
+        
+        $sales_tax_data = $sales_tax_query->get();
+        
+        // Get purchase tax data - only rows with tax
+        $purchase_tax_query = Purchase::whereDate('created_at', '>=', $start_date)
+            ->whereDate('created_at', '<=', $end_date)
+            ->where(function($query) {
+                $query->where('total_tax', '>', 0)
+                      ->orWhere('order_tax', '>', 0);
+            });
+        
+        if($warehouse_id != 0) {
+            $purchase_tax_query->where('warehouse_id', $warehouse_id);
+        }
+        
+        $purchase_tax_data = $purchase_tax_query->get();
+        
+        // Calculate tax summaries
+        $sales_tax_summary = [
+            'total_tax' => $sales_tax_data->sum('total_tax'),
+            'order_tax' => $sales_tax_data->sum('order_tax'),
+            'total_tax_collected' => $sales_tax_data->sum('total_tax') + $sales_tax_data->sum('order_tax'),
+            'total_sales' => $sales_tax_data->sum('grand_total'),
+            'count' => $sales_tax_data->count()
+        ];
+        
+        $purchase_tax_summary = [
+            'total_tax' => $purchase_tax_data->sum('total_tax'),
+            'order_tax' => $purchase_tax_data->sum('order_tax'),
+            'total_tax_paid' => $purchase_tax_data->sum('total_tax') + $purchase_tax_data->sum('order_tax'),
+            'total_purchases' => $purchase_tax_data->sum('grand_total'),
+            'count' => $purchase_tax_data->count()
+        ];
+        
+        // Get tax breakdown by rate
+        $tax_rates = Tax::where('is_active', true)->get();
+        $sales_tax_breakdown = [];
+        $purchase_tax_breakdown = [];
+        
+        foreach($tax_rates as $tax) {
+            $sales_tax_breakdown[$tax->rate] = [
+                'rate' => $tax->rate,
+                'name' => $tax->name,
+                'amount' => 0,
+                'count' => 0
+            ];
+            $purchase_tax_breakdown[$tax->rate] = [
+                'rate' => $tax->rate,
+                'name' => $tax->name,
+                'amount' => 0,
+                'count' => 0
+            ];
+        }
+        
+        // Calculate tax breakdown for sales
+        foreach($sales_tax_data as $sale) {
+            $product_sales = Product_Sale::where('sale_id', $sale->id)->get();
+            foreach($product_sales as $product_sale) {
+                $tax_rate = $product_sale->tax_rate;
+                if(isset($sales_tax_breakdown[$tax_rate])) {
+                    $sales_tax_breakdown[$tax_rate]['amount'] += $product_sale->tax;
+                    $sales_tax_breakdown[$tax_rate]['count']++;
+                }
+            }
+        }
+        
+        // Calculate tax breakdown for purchases
+        foreach($purchase_tax_data as $purchase) {
+            $product_purchases = ProductPurchase::where('purchase_id', $purchase->id)->get();
+            foreach($product_purchases as $product_purchase) {
+                $tax_rate = $product_purchase->tax_rate;
+                if(isset($purchase_tax_breakdown[$tax_rate])) {
+                    $purchase_tax_breakdown[$tax_rate]['amount'] += $product_purchase->tax;
+                    $purchase_tax_breakdown[$tax_rate]['count']++;
+                }
+            }
+        }
+        
+        $lims_warehouse_list = Warehouse::where('is_active', true)->get();
+        
+        return view('backend.report.tax_report', compact(
+            'start_date', 
+            'end_date', 
+            'warehouse_id', 
+            'tax_type',
+            'sales_tax_data', 
+            'purchase_tax_data',
+            'sales_tax_summary', 
+            'purchase_tax_summary',
+            'sales_tax_breakdown', 
+            'purchase_tax_breakdown',
+            'lims_warehouse_list'
+        ));
     }
 }
