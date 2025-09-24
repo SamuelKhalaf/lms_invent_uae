@@ -33,46 +33,115 @@ class AdjustmentController extends Controller
 
     public function getProduct($id)
     {
-        $lims_product_warehouse_data = DB::table('products')
-                                    ->join('product_warehouse', 'products.id', '=', 'product_warehouse.product_id')
-                                    ->whereNull('products.is_variant')
-                                    ->where([
-                                        ['products.is_active', true], 
-                                        ['product_warehouse.warehouse_id', $id]
-                                    ])
-                                    ->select('product_warehouse.qty', 'products.code', 'products.name')
-                                    ->get();
-        $lims_product_withVariant_warehouse_data = DB::table('products')
-                                    ->join('product_warehouse', 'products.id', '=', 'product_warehouse.product_id')
-                                    ->whereNotNull('products.is_variant')
-                                    ->where([
-                                        ['products.is_active', true], 
-                                        ['product_warehouse.warehouse_id', $id]
-                                    ])
-                                    ->select('products.name', 'product_warehouse.qty', 'product_warehouse.product_id', 'product_warehouse.variant_id')
-                                    ->get();
+        // Load ALL active products (and variants) with LEFT JOIN to product_warehouse for the selected warehouse.
+        // This returns items even if there is no warehouse record; we'll indicate that via has_record flag.
+
+        $nonVariant = DB::table('products')
+            ->leftJoin('product_warehouse', function($join) use ($id) {
+                $join->on('products.id', '=', 'product_warehouse.product_id')
+                     ->where('product_warehouse.warehouse_id', '=', $id)
+                     ->whereNull('product_warehouse.variant_id');
+            })
+            ->whereNull('products.is_variant')
+            ->where('products.is_active', true)
+            ->where(function($q){
+                // Include:
+                // - Non-batch products (is_batch = 0 OR NULL)
+                // - Batched products when NO pw record exists (so product still selectable)
+                // - Batched products when pw exists but product_batch_id IS NULL (unbatched stock present in warehouse)
+                $q->whereNull('products.is_batch')
+                  ->orWhere('products.is_batch', 0)
+                  ->orWhereNull('product_warehouse.id')
+                  ->orWhere(function($q2){
+                      $q2->where('products.is_batch', 1)
+                         ->whereNotNull('product_warehouse.id')
+                         ->whereNull('product_warehouse.product_batch_id');
+                  });
+            })
+            ->select(
+                'products.name as name',
+                'products.code as code',
+                DB::raw('COALESCE(product_warehouse.qty, 0) as qty'),
+                DB::raw('CASE WHEN product_warehouse.id IS NULL THEN 0 ELSE 1 END as has_record'),
+                DB::raw('NULL as batch_no'),
+                DB::raw('NULL as product_batch_id'),
+                DB::raw('NULL as expired_date'),
+                DB::raw('products.is_batch as is_batch')
+            );
+
+        $variant = DB::table('products')
+            ->join('product_variants', 'products.id', '=', 'product_variants.product_id')
+            ->leftJoin('product_warehouse', function($join) use ($id) {
+                $join->on('product_variants.product_id', '=', 'product_warehouse.product_id')
+                     ->on('product_variants.variant_id', '=', 'product_warehouse.variant_id')
+                     ->where('product_warehouse.warehouse_id', '=', $id);
+            })
+            ->whereNotNull('products.is_variant')
+            ->where('products.is_active', true)
+            ->select(
+                'products.name as name',
+                'product_variants.item_code as code',
+                DB::raw('COALESCE(product_warehouse.qty, 0) as qty'),
+                DB::raw('CASE WHEN product_warehouse.id IS NULL THEN 0 ELSE 1 END as has_record'),
+                DB::raw('NULL as batch_no'),
+                DB::raw('NULL as product_batch_id'),
+                DB::raw('NULL as expired_date'),
+                DB::raw('0 as is_batch')
+            );
+
+        // Batched products: one row per batch in selected warehouse
+        $batched = DB::table('products')
+            ->join('product_warehouse', function($join) use ($id) {
+                $join->on('products.id', '=', 'product_warehouse.product_id')
+                     ->where('product_warehouse.warehouse_id', '=', $id)
+                     ->whereNull('product_warehouse.variant_id')
+                     ->whereNotNull('product_warehouse.product_batch_id');
+            })
+            ->join('product_batches', 'product_batches.id', '=', 'product_warehouse.product_batch_id')
+            ->where('products.is_active', true)
+            ->where('products.is_batch', 1)
+            ->select(
+                'products.name as name',
+                'products.code as code',
+                DB::raw('COALESCE(product_warehouse.qty, 0) as qty'),
+                DB::raw('1 as has_record'),
+                'product_batches.batch_no as batch_no',
+                'product_batches.id as product_batch_id',
+                'product_batches.expired_date as expired_date',
+                DB::raw('1 as is_batch')
+            );
+
+        $rows = $nonVariant->unionAll($variant)->unionAll($batched)->get();
+
         $product_code = [];
         $product_name = [];
         $product_qty = [];
+        $product_has_record = [];
+        $batch_no = [];
+        $product_batch_id = [];
+        $expired_date = [];
+        $is_batch = [];
         $product_data = [];
-        foreach ($lims_product_warehouse_data as $product_warehouse) 
-        {
-            $product_qty[] = $product_warehouse->qty;
-            $product_code[] =  $product_warehouse->code;
-            $product_name[] = $product_warehouse->name;
-        }
 
-        foreach ($lims_product_withVariant_warehouse_data as $product_warehouse) 
-        {
-            $product_variant = ProductVariant::select('item_code')->FindExactProduct($product_warehouse->product_id, $product_warehouse->variant_id)->first();
-            $product_qty[] = $product_warehouse->qty;
-            $product_code[] =  $product_variant->item_code;
-            $product_name[] = $product_warehouse->name;
+        foreach ($rows as $row) {
+            $product_code[] = $row->code;
+            $product_name[] = $row->name;
+            $product_qty[] = (float)$row->qty;
+            $product_has_record[] = (int)$row->has_record;
+            $batch_no[] = $row->batch_no;
+            $product_batch_id[] = $row->product_batch_id;
+            $expired_date[] = $row->expired_date ? date('Y-m-d', strtotime($row->expired_date)) : null;
+            $is_batch[] = (int)$row->is_batch;
         }
 
         $product_data[] = $product_code;
         $product_data[] = $product_name;
         $product_data[] = $product_qty;
+        $product_data[] = $product_has_record;
+        $product_data[] = $batch_no;
+        $product_data[] = $product_batch_id;
+        $product_data[] = $expired_date;
+        $product_data[] = $is_batch;
         return $product_data;
     }
 
@@ -116,6 +185,8 @@ class AdjustmentController extends Controller
     public function store(Request $request)
     {
         $data = $request->except('document');
+        \Log::info('=== ADJUSTMENT STORE START ===');
+        \Log::info('Incoming payload (except document):', $data);
         //return $data;
         if( isset($data['stock_count_id']) ){
             $lims_stock_count_data = StockCount::find($data['stock_count_id']);
@@ -130,13 +201,26 @@ class AdjustmentController extends Controller
             $data['document'] = $documentName;
         }
         $lims_adjustment_data = Adjustment::create($data);
+        \Log::info('Created adjustment header ID: ' . $lims_adjustment_data->id);
 
         $product_id = $data['product_id'];
         $product_code = $data['product_code'];
         $qty = $data['qty'];
+        $product_batch_id = $data['product_batch_id'] ?? [];
+        $batch_no = $data['batch_no'] ?? [];
+        $expire_date = $data['expire_date'] ?? [];
         $action = $data['action'];
 
         foreach ($product_id as $key => $pro_id) {
+            \Log::info('Processing line ' . $key . ':', [
+                'product_id' => $pro_id,
+                'product_code' => $product_code[$key] ?? null,
+                'product_batch_id' => $product_batch_id[$key] ?? null,
+                'batch_no' => $batch_no[$key] ?? null,
+                'expire_date' => $expire_date[$key] ?? null,
+                'qty' => $qty[$key] ?? null,
+                'action' => $action[$key] ?? null,
+            ]);
             $lims_product_data = Product::find($pro_id);
             if($lims_product_data->is_variant) {
                 $lims_product_variant_data = ProductVariant::select('id', 'variant_id', 'qty')->FindExactProductWithCode($pro_id, $product_code[$key])->first();
@@ -145,6 +229,24 @@ class AdjustmentController extends Controller
                     ['variant_id', $lims_product_variant_data->variant_id ],
                     ['warehouse_id', $data['warehouse_id'] ],
                 ])->first();
+                if(!$lims_product_warehouse_data) {
+                    if($action[$key] == '+') {
+                        \Log::info('No PW row for variant; creating new for addition');
+                        $lims_product_warehouse_data = Product_Warehouse::create([
+                            'product_id' => $pro_id,
+                            'variant_id' => $lims_product_variant_data->variant_id,
+                            'warehouse_id' => $data['warehouse_id'],
+                            'qty' => 0,
+                        ]);
+                    } else {
+                        \Log::warning('Subtraction requested but no PW row for variant; aborting line');
+                        return back()->with('not_permitted', 'Cannot subtract: no stock record for this product in the selected warehouse.');
+                    }
+                }
+                \Log::info('Variant mapping:', [
+                    'variant_id' => $lims_product_variant_data->variant_id ?? null,
+                    'pw_qty' => $lims_product_warehouse_data->qty ?? null,
+                ]);
 
                 if($action[$key] == '-'){
                     $lims_product_variant_data->qty -= $qty[$key];
@@ -160,7 +262,36 @@ class AdjustmentController extends Controller
                     ['product_id', $pro_id],
                     ['warehouse_id', $data['warehouse_id'] ],
                     ])->first();
+                // If batched and a batch_id provided, scope to that batch id
+                if($lims_product_data->is_batch && isset($product_batch_id[$key]) && $product_batch_id[$key]) {
+                    $lims_product_warehouse_data = Product_Warehouse::where([
+                        ['product_id', $pro_id],
+                        ['warehouse_id', $data['warehouse_id'] ],
+                        ['product_batch_id', $product_batch_id[$key] ],
+                    ])->first();
+                }
+                if(!$lims_product_warehouse_data) {
+                    if($action[$key] == '+') {
+                        \Log::info('No PW row; creating new for addition', [
+                            'product_batch_id' => $product_batch_id[$key] ?? null
+                        ]);
+                        $lims_product_warehouse_data = Product_Warehouse::create([
+                            'product_id' => $pro_id,
+                            'warehouse_id' => $data['warehouse_id'],
+                            'product_batch_id' => ($lims_product_data->is_batch && !empty($product_batch_id[$key])) ? (int)$product_batch_id[$key] : null,
+                            'qty' => 0,
+                        ]);
+                    } else {
+                        \Log::warning('Subtraction requested but no PW row; aborting line');
+                        return back()->with('not_permitted', 'Cannot subtract: no stock record for this product in the selected warehouse.');
+                    }
+                }
                 $variant_id = null;
+                \Log::info('Non-variant mapping:', [
+                    'is_batch' => (int)$lims_product_data->is_batch,
+                    'product_batch_id' => $product_batch_id[$key] ?? null,
+                    'pw_qty' => $lims_product_warehouse_data->qty ?? null,
+                ]);
             }
 
             if($action[$key] == '-') {
@@ -173,14 +304,73 @@ class AdjustmentController extends Controller
             }
             $lims_product_data->save();
             $lims_product_warehouse_data->save();
+            \Log::info('After apply action:', [
+                'global_product_qty' => $lims_product_data->qty,
+                'warehouse_qty' => $lims_product_warehouse_data->qty,
+            ]);
+
+            // Handle batch creation for new batch data
+            $final_batch_id = null;
+            \Log::info('Batch creation check:', [
+                'is_batch' => $lims_product_data->is_batch,
+                'batch_no_key' => $batch_no[$key] ?? 'not_set',
+                'expire_date_key' => $expire_date[$key] ?? 'not_set',
+                'batch_no_empty' => empty($batch_no[$key]),
+                'expire_date_empty' => empty($expire_date[$key])
+            ]);
+            if($lims_product_data->is_batch && !empty($batch_no[$key]) && !empty($expire_date[$key])) {
+                // Check if this batch already exists
+                $existing_batch = \App\ProductBatch::where([
+                    ['product_id', $pro_id],
+                    ['batch_no', $batch_no[$key]]
+                ])->first();
+                
+                if($existing_batch) {
+                    $final_batch_id = $existing_batch->id;
+                    // Update existing batch quantity
+                    if($action[$key] == '+') {
+                        $existing_batch->qty += $qty[$key];
+                    } elseif($action[$key] == '-') {
+                        $existing_batch->qty -= $qty[$key];
+                    }
+                    $existing_batch->save();
+                    \Log::info('Using existing batch ID: ' . $final_batch_id . ', updated qty to: ' . $existing_batch->qty);
+                } else {
+                    // Create new batch with initial quantity
+                    $initial_qty = ($action[$key] == '+') ? $qty[$key] : 0;
+                    $new_batch = \App\ProductBatch::create([
+                        'product_id' => $pro_id,
+                        'batch_no' => $batch_no[$key],
+                        'expired_date' => $expire_date[$key],
+                        'qty' => $initial_qty
+                    ]);
+                    $final_batch_id = $new_batch->id;
+                    \Log::info('Created new batch ID: ' . $final_batch_id . ' with qty: ' . $initial_qty);
+                }
+                
+                // Update product_warehouse to use the correct batch_id
+                if($lims_product_warehouse_data->product_batch_id != $final_batch_id) {
+                    $lims_product_warehouse_data->product_batch_id = $final_batch_id;
+                    $lims_product_warehouse_data->save();
+                }
+            } elseif($lims_product_data->is_batch && isset($product_batch_id[$key]) && $product_batch_id[$key]) {
+                // Use existing batch_id from selection
+                $final_batch_id = (int)$product_batch_id[$key];
+            }
 
             $product_adjustment['product_id'] = $pro_id;
             $product_adjustment['variant_id'] = $variant_id;
             $product_adjustment['adjustment_id'] = $lims_adjustment_data->id;
             $product_adjustment['qty'] = $qty[$key];
             $product_adjustment['action'] = $action[$key];
+            // Persist batch id if present
+            if($final_batch_id) {
+                $product_adjustment['product_batch_id'] = $final_batch_id;
+            }
             ProductAdjustment::create($product_adjustment);
+            \Log::info('Created product_adjustment row');
         }
+        \Log::info('=== ADJUSTMENT STORE END ===');
         return redirect('qty_adjustment')->with('message', 'Data inserted successfully');
     }
 

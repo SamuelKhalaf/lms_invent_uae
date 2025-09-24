@@ -50,6 +50,8 @@
                                                         <th>{{trans('file.name')}}</th>
                                                         <th>{{trans('file.Code')}}</th>
                                                         <th>{{trans('file.Quantity')}}</th>
+                                                        <th>Batch Number</th>
+                                                        <th>Expire Date</th>
                                                         <th>{{trans('file.action')}}</th>
                                                         <th><i class="dripicons-trash"></i></th>
                                                     </tr>
@@ -58,7 +60,7 @@
                                                 </tbody>
                                                 <tfoot class="tfoot active">
                                                     <th colspan="2">{{trans('file.Total')}}</th>
-                                                    <th id="total-qty" colspan="2">0</th>
+                                                    <th id="total-qty" colspan="4">0</th>
                                                     <th><i class="dripicons-trash"></i></th>
                                                 </tfoot>
                                             </table>
@@ -105,6 +107,11 @@
     var product_code = [];
     var product_name = [];
     var product_qty = [];
+    var product_has_record = [];
+    var batch_no = [];
+    var product_batch_id = [];
+    var expired_date = [];
+    var is_batch = [];
 
 	$('.selectpicker').selectpicker({
 	    style: 'btn-link',
@@ -114,13 +121,27 @@
 
 	$('select[name="warehouse_id"]').on('change', function() {
 	    var id = $(this).val();
-	    $.get('getproduct/' + id, function(data) {
+            $.get('getproduct/' + id, function(data) {
 	        lims_product_array = [];
 	        product_code = data[0];
 	        product_name = data[1];
-	        product_qty = data[2];
-	        $.each(product_code, function(index) {
-	            lims_product_array.push(product_code[index] + ' (' + product_name[index] + ')');
+                product_qty = data[2];
+                product_has_record = data[3] || [];
+                batch_no = data[4] || [];
+                product_batch_id = data[5] || [];
+                expired_date = data[6] || [];
+                is_batch = data[7] || [];
+                $.each(product_code, function(index) {
+                    var labelName = product_name[index];
+                    if (is_batch[index] === 1 && product_batch_id[index]) {
+                        labelName += ' - Batch: ' + batch_no[index] + (expired_date[index] ? ' (Exp: ' + expired_date[index] + ')' : '');
+                        // Build autocomplete entry that carries batch_id and array index
+                        lims_product_array.push(product_code[index] + ' (' + labelName + ')|' + product_batch_id[index] + '|' + index);
+                    } else {
+                        var base = product_code[index] + ' (' + labelName + ')';
+                        if(product_has_record[index] === 0) base += ' [No stock record]';
+                        lims_product_array.push(base + '||' + index);
+                    }
 	        });
 	    });
 	});
@@ -151,6 +172,13 @@
 	    rowindex = $(this).closest('tr').index();
 	    checkQuantity($(this).val(), true);
 	});
+
+    // Keep stock hint (under name) updated if needed
+    $("#myTable").on('change', '.act-val', function() {
+        rowindex = $(this).closest('tr').index();
+        var pos = parseInt($('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.array-index').val());
+        $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.stock-hint').text('Stock: ' + (parseFloat(product_qty[pos]) || 0));
+    });
 
 	$("table.order-list tbody").on("click", ".ibtnDel", function(event) {
 	    rowindex = $(this).closest('tr').index();
@@ -183,9 +211,55 @@
 	        alert("Please insert product to order table!")
 	        e.preventDefault();
 	    }
+        else {
+            // Re-enable disabled inputs so they get submitted
+            $('.batch-no, .expire-date').prop('disabled', false);
+            console.log('=== ADJUSTMENT CREATE SUBMIT DEBUG ===');
+            var product_ids = [];
+            var product_codes = [];
+            var product_batch_ids = [];
+            var batch_nos = [];
+            var expire_dates = [];
+            var quantities = [];
+            var actions = [];
+            $('table.order-list tbody tr').each(function(index){
+                var pid = $(this).find('.product-id').val();
+                var pcode = $(this).find('.product-code').val();
+                var pbatch = $(this).find('.product-batch-id').val() || '';
+                var batchNo = $(this).find('.batch-no').val() || '';
+                var expireDate = $(this).find('.expire-date').val() || '';
+                var qty = $(this).find('.qty').val();
+                var action = $(this).find('.act-val').val();
+                product_ids.push(pid);
+                product_codes.push(pcode);
+                product_batch_ids.push(pbatch);
+                batch_nos.push(batchNo);
+                expire_dates.push(expireDate);
+                quantities.push(qty);
+                actions.push(action);
+                console.log('Row ' + index + ':', { 
+                    product_id: pid, 
+                    product_code: pcode, 
+                    product_batch_id: pbatch, 
+                    batch_no: batchNo, 
+                    expire_date: expireDate, 
+                    qty: qty, 
+                    action: action 
+                });
+            });
+            console.log('All Product IDs:', product_ids);
+            console.log('All Product Codes:', product_codes);
+            console.log('All Product Batch IDs:', product_batch_ids);
+            console.log('All Batch Numbers:', batch_nos);
+            console.log('All Expire Dates:', expire_dates);
+            console.log('All Quantities:', quantities);
+            console.log('All Actions:', actions);
+            console.log('Warehouse ID:', $('#warehouse_id').val());
+            console.log('Total Rows:', product_ids.length);
+        }
 	});
 
-	function productSearch(data){
+    function productSearch(data){
 		$.ajax({
             type: 'GET',
             url: 'lims_product_search',
@@ -194,8 +268,15 @@
             },
             success: function(data) {
                 var flag = 1;
-                $(".product-code").each(function(i) {
-                    if ($(this).val() == data[1]) {
+                var parts = $("#lims_productcodeSearch").val().split('|');
+                var selected_code_and_name = parts[0];
+                var selected_batch_id = parts.length > 1 && parts[1] !== '' ? parts[1] : '';
+                var selected_index = parts.length > 2 ? parseInt(parts[2]) : product_code.indexOf(data[1]);
+
+                $("table.order-list tbody tr").each(function(i) {
+                    var existing_code = $(this).find('.product-code').val();
+                    var existing_batch = $(this).find('.product-batch-id').val() || '';
+                    if (existing_code == product_code[selected_index] && existing_batch == (selected_batch_id || '')) {
                         rowindex = i;
 	                    var qty = parseFloat($('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val()) + 1;
 	                    $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val(qty);
@@ -207,13 +288,70 @@
                 if(flag){
                     var newRow = $("<tr>");
                     var cols = '';
-                    cols += '<td>' + data[0] + '</td>';
-                    cols += '<td>' + data[1] + '</td>';
-                    cols += '<td><input type="number" class="form-control qty" name="qty[]" value="1" required step="any" /></td>';
-                    cols += '<td class="action"><select name="action[]" class="form-control act-val"><option value="-">{{trans("file.Subtraction")}}</option><option value="+">{{trans("file.Addition")}}</option></select></td>';
+                    var displayName = data[0];
+                    if (is_batch[selected_index] === 1 && product_batch_id[selected_index]) {
+                        displayName += ' - Batch: ' + batch_no[selected_index] + (expired_date[selected_index] ? ' (Exp: ' + expired_date[selected_index] + ')' : '');
+                    }
+                    cols += '<td>' + displayName + '<small class="text-muted d-block stock-hint">Stock: ' + (parseFloat(product_qty[selected_index]) || 0) + '</small></td>';
+                    cols += '<td>' + product_code[selected_index] + '</td>';
+                    var pos = selected_index;
+                    cols += '<td>'+
+                        '<input type="number" class="form-control qty" name="qty[]" value="1" required step="any" />'+
+                    '</td>';
+                    
+                    // Batch Number and Expire Date columns
+                    var isBatched = is_batch[pos] === 1;
+                    var hasRecord = product_has_record[pos] === 1;
+                    var hasBatchData = isBatched && product_batch_id[pos];
+                    
+                    // Batch Number column
+                    if (isBatched) {
+                        if (hasBatchData) {
+                            // Auto-fill and disable for existing batch
+                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="' + (batch_no[pos] || '') + '" disabled /></td>';
+                        } else if (hasRecord) {
+                            // Empty, editable, not required for existing product without batch
+                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" /></td>';
+                        } else {
+                            // Required for new product
+                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" required /></td>';
+                        }
+                    } else {
+                        // Disabled for non-batched products
+                        cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" disabled /></td>';
+                    }
+                    
+                    // Expire Date column
+                    if (isBatched) {
+                        if (hasBatchData) {
+                            // Auto-fill and disable for existing batch
+                            cols += '<td><input type="date" class="form-control expire-date" name="expire_date[]" value="' + (expired_date[pos] || '') + '" disabled /></td>';
+                        } else if (hasRecord) {
+                            // Empty, editable, not required for existing product without batch
+                            cols += '<td><input type="date" class="form-control expire-date" name="expire_date[]" value="" /></td>';
+                        } else {
+                            // Required for new product
+                            cols += '<td><input type="date" class="form-control expire-date" name="expire_date[]" value="" required /></td>';
+                        }
+                    } else {
+                        // Disabled for non-batched products
+                        cols += '<td><input type="date" class="form-control expire-date" name="expire_date[]" value="" disabled /></td>';
+                    }
+                    
+                    var hasRecord = product_has_record[pos] === 1;
+                    var actionSelect = '<select name="action[]" class="form-control act-val">';
+                    if(hasRecord) {
+                        actionSelect += '<option value="-">{{trans("file.Subtraction")}}</option>';
+                    }
+                    actionSelect += '<option value="+">{{trans("file.Addition")}}</option>';
+                    actionSelect += '</select>';
+                    cols += '<td class="action">' + actionSelect + (hasRecord ? '' : ' <span class="badge badge-warning">No warehouse record</span>') + '</td>';
                     cols += '<td><button type="button" class="ibtnDel btn btn-md btn-danger">{{trans("file.delete")}}</button></td>';
-                    cols += '<input type="hidden" class="product-code" name="product_code[]" value="' + data[1] + '"/>';
+                    // Store only the raw code for backend processing
+                    cols += '<input type="hidden" class="product-code" name="product_code[]" value="' + product_code[selected_index] + '"/>';
                     cols += '<input type="hidden" class="product-id" name="product_id[]" value="' + data[2] + '"/>';
+                    cols += '<input type="hidden" class="product-batch-id" name="product_batch_id[]" value="' + (selected_batch_id || '') + '"/>';
+                    cols += '<input type="hidden" class="array-index" value="' + selected_index + '"/>';
 
                     newRow.append(cols);
                     $("table.order-list tbody").append(newRow);
@@ -225,11 +363,18 @@
 	}
 
 	function checkQuantity(qty) {
-	    var row_product_code = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('td:nth-child(2)').text();
+        var row_product_code = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('td:nth-child(2)').text();
 	    var action = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.act-val').val();
-	    var pos = product_code.indexOf(row_product_code);
+        var pos = parseInt($('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.array-index').val());
 
-	    if ( (qty > parseFloat(product_qty[pos])) && (action == '-') ) {
+        // Prevent subtraction for products without warehouse record
+        var hasRecord = product_has_record[pos] === 1;
+
+        if (!hasRecord && action == '-') {
+            alert('Cannot subtract: no stock record for this product in the selected warehouse.');
+            $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.act-val').val('+');
+        }
+        else if ( (qty > parseFloat(product_qty[pos])) && (action == '-') ) {
 	        alert('Quantity exceeds stock quantity!');
             var row_qty = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.qty').val();
             row_qty = row_qty.substring(0, row_qty.length - 1);

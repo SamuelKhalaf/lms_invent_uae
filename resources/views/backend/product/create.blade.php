@@ -231,7 +231,7 @@
                                         <textarea name="product_details" class="form-control" rows="3"></textarea>
                                     </div>
                                 </div>
-                                <div class="col-md-12 mt-3" id="variant-option">
+                                <div class="col-md-12 mt-3" id="variant-option" style="display: none;">
                                     <h5><input name="is_variant" type="checkbox" id="is-variant" value="1">&nbsp; {{trans('file.This product has variant')}}</h5>
                                 </div>
                                 <div class="col-md-12" id="variant-section">
@@ -263,7 +263,7 @@
                                         </table>
                                     </div>
                                 </div>
-                                <div class="col-md-12 mt-2" id="diffPrice-option">
+                                <div class="col-md-12 mt-2" id="diffPrice-option" style="display: none;">
                                     <h5><input name="is_diffPrice" type="checkbox" id="is-diffPrice" value="1">&nbsp; {{trans('file.This product has different price for different warehouse')}}</h5>
                                 </div>
                                 <div class="col-md-6" id="diffPrice-section">
@@ -292,10 +292,10 @@
                                 <div class="col-md-12 mt-3" id="batch-option">
                                     <h5><input name="is_batch" type="checkbox" id="is-batch" value="1">&nbsp; {{trans('file.This product has batch and expired date')}}</h5>
                                 </div>
-                                <div class="col-md-12 mt-3" id="imei-option">
+                                <div class="col-md-12 mt-3" id="imei-option" style="display: none;">
                                     <h5><input name="is_imei" type="checkbox" id="is-imei" value="1">&nbsp; {{trans('file.This product has IMEI or Serial numbers')}}</h5>
                                 </div>
-                                <div class="col-md-4 mt-3">
+                                <div class="col-md-4 mt-3" style="display: none;">
                                     <input name="promotion" type="checkbox" id="promotion" value="1">&nbsp;
                                     <label><h5> {{trans('file.Add Promotional Price')}}</h5></label>
                                 </div>
@@ -996,13 +996,13 @@
         });
     }
 
-    $("input[name='is_batch']").on("change", function () {
-        if ($(this).is(':checked')) {
-            $("#variant-option").hide(300);
-        }
-        else
-            $("#variant-option").show(300);
-    });
+    // $("input[name='is_batch']").on("change", function () {
+    //     if ($(this).is(':checked')) {
+    //         $("#variant-option").hide(300);
+    //     }
+    //     else
+    //         $("#variant-option").show(300);
+    // });
 
     $("input[name='is_variant']").on("change", function () {
         if ($(this).is(':checked')) {

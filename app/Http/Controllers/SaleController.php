@@ -454,7 +454,7 @@ class SaleController extends Controller
         $mail_data['paid_amount'] = $lims_sale_data->paid_amount;
 
         $product_id = $data['product_id'];
-        $product_batch_id = $data['product_batch_id'];
+        $product_batch_id = isset($data['product_batch_id']) ? array_filter($data['product_batch_id'], function($value) { return $value !== '' && $value !== null; }) : [];
         $imei_number = $data['imei_number'];
         $product_code = $data['product_code'];
         $qty = $data['qty'];
@@ -527,10 +527,14 @@ class SaleController extends Controller
                 $sale_unit_id = $lims_sale_unit_data->id;
                 if($lims_product_data->is_variant) {
                     $lims_product_variant_data = ProductVariant::select('id', 'variant_id', 'qty')->FindExactProductWithCode($id, $product_code[$i])->first();
-                    $product_sale['variant_id'] = $lims_product_variant_data->variant_id;
+                    $product_sale['variant_id'] = (int) $lims_product_variant_data->variant_id;
+                } else {
+                    $product_sale['variant_id'] = null;
                 }
-                if($lims_product_data->is_batch && $product_batch_id[$i]) {
-                    $product_sale['product_batch_id'] = $product_batch_id[$i];
+                if($lims_product_data->is_batch && isset($product_batch_id[$i]) && !empty($product_batch_id[$i])) {
+                    $product_sale['product_batch_id'] = (int) $product_batch_id[$i];
+                } else {
+                    $product_sale['product_batch_id'] = null;
                 }
 
                 if($data['sale_status'] == 1) {
@@ -538,33 +542,97 @@ class SaleController extends Controller
                         $quantity = $qty[$i] * $lims_sale_unit_data->operation_value;
                     elseif($lims_sale_unit_data->operator == '/')
                         $quantity = $qty[$i] / $lims_sale_unit_data->operation_value;
-                    //deduct quantity
+                    
+                    // Validate total available quantity before any deduction
+                    // if($lims_product_data->qty < $quantity) {
+                    //     return redirect()->back()->with('not_permitted', 'Insufficient stock for product: ' . $lims_product_data->name . '. Available: ' . $lims_product_data->qty . ', Required: ' . $quantity);
+                    // }
+                    
+                    //deduct quantity from main product table
                     $lims_product_data->qty = $lims_product_data->qty - $quantity;
                     $lims_product_data->save();
+                    
                     //deduct product variant quantity if exist
                     if($lims_product_data->is_variant) {
                         $lims_product_variant_data->qty -= $quantity;
                         $lims_product_variant_data->save();
                         $lims_product_warehouse_data = Product_Warehouse::FindProductWithVariant($id, $lims_product_variant_data->variant_id, $data['warehouse_id'])->first();
                     }
-                    elseif($product_batch_id[$i]) {
-                        $lims_product_warehouse_data = Product_Warehouse::where([
-                            ['product_batch_id', $product_batch_id[$i] ],
-                            ['warehouse_id', $data['warehouse_id'] ]
-                        ])->first();
+                    elseif(isset($product_batch_id[$i]) && $product_batch_id[$i]) {
+                        // Smart batch deduction logic
                         $lims_product_batch_data = ProductBatch::find($product_batch_id[$i]);
-                        //deduct product batch quantity
-                        // if($lims_product_batch_data) {
-                            $lims_product_batch_data->qty -= $quantity;
-                            $lims_product_batch_data->save();
-                        // }
+                        
+                        if($lims_product_batch_data && $lims_product_batch_data->qty > 0) {
+                            // Check if batch has enough quantity
+                            if($lims_product_batch_data->qty >= $quantity) {
+                                // Deduct entirely from batch
+                                $lims_product_batch_data->qty -= $quantity;
+                                $lims_product_batch_data->save();
+                                
+                                // Get warehouse data for this batch
+                                $lims_product_warehouse_data = Product_Warehouse::where([
+                                    ['product_batch_id', $product_batch_id[$i] ],
+                                    ['warehouse_id', $data['warehouse_id'] ]
+                                ])->first();
+                            } else {
+                                // Partial deduction from batch, rest from non-batch
+                                $batch_deduction = $lims_product_batch_data->qty;
+                                $remaining_qty = $quantity - $batch_deduction;
+                                
+                                // Deduct all from batch
+                                $lims_product_batch_data->qty = 0;
+                                $lims_product_batch_data->save();
+                                
+                                // Get batch warehouse data
+                                $batch_warehouse = Product_Warehouse::where([
+                                    ['product_batch_id', $product_batch_id[$i] ],
+                                    ['warehouse_id', $data['warehouse_id'] ]
+                                ])->first();
+                                
+                                // Get non-batch warehouse data
+                                $lims_product_warehouse_data = Product_Warehouse::where([
+                                    ['product_id', $id],
+                                    ['warehouse_id', $data['warehouse_id']],
+                                    ['product_batch_id', null]
+                                ])->first();
+                            }
+                        } else {
+                            // No batch quantity available, but still deduct from batch warehouse
+                            $lims_product_warehouse_data = Product_Warehouse::where([
+                                ['product_batch_id', $product_batch_id[$i] ],
+                                ['warehouse_id', $data['warehouse_id'] ]
+                            ])->first();
+                            
+                            // If no batch warehouse found, try non-batch warehouse
+                            if (!$lims_product_warehouse_data) {
+                                $lims_product_warehouse_data = Product_Warehouse::where([
+                                    ['product_id', $id],
+                                    ['warehouse_id', $data['warehouse_id']],
+                                    ['product_batch_id', null]
+                                ])->first();
+                            }
+                        }
                     }
                     else {
                         $lims_product_warehouse_data = Product_Warehouse::FindProductWithoutVariant($id, $data['warehouse_id'])->first();
+                        
+                        // Warehouse data will be handled in final deduction
                     }
-                    //deduct quantity from warehouse
-                    $lims_product_warehouse_data->qty -= $quantity;
-                    $lims_product_warehouse_data->save();
+                    
+                    // Single warehouse deduction at the end - handles all cases
+                    if($lims_product_warehouse_data) {
+                        // Check if warehouse has sufficient quantity
+                        if($lims_product_warehouse_data->qty >= $quantity) {
+                            $lims_product_warehouse_data->qty -= $quantity;
+                            $lims_product_warehouse_data->save();
+                        } else {
+                            // Insufficient quantity in warehouse
+                            return redirect()->back()->with('not_permitted', 'Insufficient stock in warehouse for product: ' . $lims_product_data->name . '. Available: ' . $lims_product_warehouse_data->qty . ', Required: ' . $quantity);
+                        }
+                    } else {
+                        // No warehouse found
+                        return redirect()->back()->with('not_permitted', 'No warehouse found for product: ' . $lims_product_data->name);
+                    }
                 }
             }
             else
@@ -607,6 +675,7 @@ class SaleController extends Controller
             $product_sale['tax_rate'] = $tax_rate[$i];
             $product_sale['tax'] = $tax[$i];
             $product_sale['total'] = $mail_data['total'][$i] = $total[$i];
+            
             Product_Sale::create($product_sale);
         }
         if($data['sale_status'] == 3)
@@ -951,7 +1020,7 @@ class SaleController extends Controller
         ->whereNull('product_warehouse.variant_id')
         ->whereNotNull('product_warehouse.product_batch_id')
         ->select('product_warehouse.*', 'products.is_embeded')
-        ->groupBy('product_warehouse.product_id')
+        // ->groupBy('product_warehouse.product_id')
         ->get();
 
         //now changing back the strict ON
@@ -1231,7 +1300,10 @@ class SaleController extends Controller
         $todayDate = date('Y-m-d');
         $product_code = explode("(", $request['data']);
         $product_info = explode("?", $request['data']);
+        
         $customer_id = $product_info[1];
+        $array_index = isset($product_info[3]) ? $product_info[3] : null;
+        
         if(strpos($request['data'], '|')) {
             $product_info = explode("|", $request['data']);
             $embeded_code = $product_code[0];
@@ -1254,18 +1326,28 @@ class SaleController extends Controller
                         ])
                         ->select('discounts.*')
                         ->get();
+        // Use the correct product code from the first part of the split
+        $actual_product_code = $product_info[0];
         $lims_product_data = Product::where([
-            ['code', $product_code[0]],
+            ['code', $actual_product_code],
             ['is_active', true]
         ])->first();
+        
         if(!$lims_product_data) {
             $lims_product_data = Product::join('product_variants', 'products.id', 'product_variants.product_id')
                 ->select('products.*', 'product_variants.id as product_variant_id', 'product_variants.item_code', 'product_variants.additional_price')
                 ->where([
-                    ['product_variants.item_code', $product_code[0]],
+                    ['product_variants.item_code', $actual_product_code],
                     ['products.is_active', true]
                 ])->first();
-            $product_variant_id = $lims_product_data->product_variant_id;
+            if($lims_product_data) {
+                $product_variant_id = $lims_product_data->product_variant_id;
+            }
+        }
+        
+        // Check if product was found
+        if(!$lims_product_data) {
+            return response()->json(['error' => 'Product not found'], 404);
         }
 
         $product[] = $lims_product_data->name;
@@ -1348,6 +1430,8 @@ class SaleController extends Controller
         $product[] = $lims_product_data->is_variant;
         $product[] = $qty;
         $product[] = $lims_product_data->lowest_price; // Add lowest price for frontend validation
+        $product[] = $array_index; // Add array index for frontend to identify specific batch
+        
         return $product;
 
     }
@@ -1755,7 +1839,7 @@ class SaleController extends Controller
         $data['created_at'] = date("Y-m-d", strtotime(str_replace("/", "-", $data['created_at'])));
         $product_id = $data['product_id'];
         $imei_number = $data['imei_number'];
-        $product_batch_id = $data['product_batch_id'];
+        $product_batch_id = isset($data['product_batch_id']) ? $data['product_batch_id'] : [];
         $product_code = $data['product_code'];
         $product_variant_id = $data['product_variant_id'];
         $qty = $data['qty'];
@@ -1767,6 +1851,7 @@ class SaleController extends Controller
         $total = $data['subtotal'];
         $old_product_id = [];
         $product_sale = [];
+
 
         // Validate lowest price before processing
         foreach ($product_id as $i => $product_id_value) {
@@ -1783,6 +1868,7 @@ class SaleController extends Controller
             $old_product_id[] = (string)$product_sale_data->product_id;
             $old_product_variant_id[] = null;
             $lims_product_data = Product::find($product_sale_data->product_id);
+
 
             if( ($lims_sale_data->sale_status == 1) && ($lims_product_data->type == 'combo') ) {
                 $product_list = explode(",", $lims_product_data->product_list);
@@ -1938,25 +2024,84 @@ class SaleController extends Controller
                         $lims_product_variant_data->qty -= $new_product_qty;
                         $lims_product_variant_data->save();
                     }
-                    elseif($product_batch_id[$key]) {
-                        $lims_product_warehouse_data = Product_Warehouse::where([
-                            ['product_id', $pro_id],
-                            ['product_batch_id', $product_batch_id[$key] ],
-                            ['warehouse_id', $data['warehouse_id'] ]
-                        ])->first();
-
+                    elseif(isset($product_batch_id[$key]) && $product_batch_id[$key] !== '' && $product_batch_id[$key] !== null) {
+                        // Smart batch deduction logic for update
                         $product_batch_data = ProductBatch::find($product_batch_id[$key]);
-                        $product_batch_data->qty -= $new_product_qty;
-                        $product_batch_data->save();
+                        
+                        if($product_batch_data && $product_batch_data->qty > 0) {
+                            // Check if batch has enough quantity
+                            if($product_batch_data->qty >= $new_product_qty) {
+                                // Deduct entirely from batch
+                                $product_batch_data->qty -= $new_product_qty;
+                                $product_batch_data->save();
+                                
+                                // Get warehouse data for this batch
+                                $lims_product_warehouse_data = Product_Warehouse::where([
+                                    ['product_id', $pro_id],
+                                    ['product_batch_id', $product_batch_id[$key] ],
+                                    ['warehouse_id', $data['warehouse_id'] ]
+                                ])->first();
+                            } else {
+                                // Partial deduction from batch, rest from non-batch
+                                $batch_deduction = $product_batch_data->qty;
+                                $remaining_qty = $new_product_qty - $batch_deduction;
+                                
+                                // Deduct all from batch
+                                $product_batch_data->qty = 0;
+                                $product_batch_data->save();
+                                
+                                // Get batch warehouse data
+                                $batch_warehouse = Product_Warehouse::where([
+                                    ['product_id', $pro_id],
+                                    ['product_batch_id', $product_batch_id[$key] ],
+                                    ['warehouse_id', $data['warehouse_id'] ]
+                                ])->first();
+                                
+                                // Get non-batch warehouse data
+                                $lims_product_warehouse_data = Product_Warehouse::where([
+                                    ['product_id', $pro_id],
+                                    ['warehouse_id', $data['warehouse_id']],
+                                    ['product_batch_id', null]
+                                ])->first();
+                            }
+                        } else {
+                            // No batch quantity available, but still deduct from batch warehouse
+                            $lims_product_warehouse_data = Product_Warehouse::where([
+                                ['product_batch_id', $product_batch_id[$key] ],
+                                ['warehouse_id', $data['warehouse_id'] ]
+                            ])->first();
+                            
+                            // If no batch warehouse found, try non-batch warehouse
+                            if (!$lims_product_warehouse_data) {
+                                $lims_product_warehouse_data = Product_Warehouse::where([
+                                    ['product_id', $pro_id],
+                                    ['warehouse_id', $data['warehouse_id']],
+                                    ['product_batch_id', null]
+                                ])->first();
+                            }
+                        }
                     }
                     else {
                         $lims_product_warehouse_data = Product_Warehouse::FindProductWithoutVariant($pro_id, $data['warehouse_id'])
                         ->first();
                     }
                     $lims_product_data->qty -= $new_product_qty;
-                    $lims_product_warehouse_data->qty -= $new_product_qty;
                     $lims_product_data->save();
-                    $lims_product_warehouse_data->save();
+                    
+                    // Single warehouse deduction at the end - handles all cases
+                    if($lims_product_warehouse_data) {
+                        // Check if warehouse has sufficient quantity
+                        if($lims_product_warehouse_data->qty >= $new_product_qty) {
+                            $lims_product_warehouse_data->qty -= $new_product_qty;
+                            $lims_product_warehouse_data->save();
+                        } else {
+                            // Insufficient quantity in warehouse
+                            return redirect()->back()->with('not_permitted', 'Insufficient stock in warehouse for product: ' . $lims_product_data->name . '. Available: ' . $lims_product_warehouse_data->qty . ', Required: ' . $new_product_qty);
+                        }
+                    } else {
+                        // No warehouse found
+                        return redirect()->back()->with('not_permitted', 'No warehouse found for product: ' . $lims_product_data->name);
+                    }
                 }
             }
             else
@@ -1995,7 +2140,7 @@ class SaleController extends Controller
             $product_sale['sale_id'] = $id ;
             $product_sale['product_id'] = $pro_id;
             $product_sale['imei_number'] = $imei_number[$key];
-            $product_sale['product_batch_id'] = $product_batch_id[$key];
+            $product_sale['product_batch_id'] = (isset($product_batch_id[$key]) && $product_batch_id[$key] !== '' && $product_batch_id[$key] !== null) ? (int) $product_batch_id[$key] : null;
             $product_sale['qty'] = $mail_data['qty'][$key] = $qty[$key];
             $product_sale['sale_unit_id'] = $sale_unit_id;
             $product_sale['net_unit_price'] = $net_unit_price[$key];
@@ -2003,7 +2148,8 @@ class SaleController extends Controller
             $product_sale['tax_rate'] = $tax_rate[$key];
             $product_sale['tax'] = $tax[$key];
             $product_sale['total'] = $mail_data['total'][$key] = $total[$key];
-            // dd($product_sale);
+            
+            
             if($product_sale['variant_id'] && in_array($product_variant_id[$key], $old_product_variant_id)) {
                 Product_Sale::where([
                     ['product_id', (int)$pro_id],
@@ -2012,15 +2158,40 @@ class SaleController extends Controller
                 ])->update($product_sale);
             }
             elseif( $product_sale['variant_id'] === null && (in_array($pro_id, $old_product_id)) ) {
-                Product_Sale::where([
+                // For existing products, we need to update them in order
+                // Get all existing rows for this product and update them one by one
+                $existing_rows = Product_Sale::where([
                     ['sale_id', (int)$id],
                     ['product_id', (int)$pro_id]
-                ])->update($product_sale);
+                ])->orderBy('id')->get();
+                
+                if($existing_rows->count() > $key) {
+                    // Update the row at position $key
+                    $row_to_update = $existing_rows[$key];
+                    $row_to_update->update($product_sale);
+                } else {
+                    // Create new row if we don't have enough existing rows
+                    Product_Sale::create($product_sale);
+                }
             }
             else {
                 Product_Sale::create($product_sale);
             }
         }
+        
+        // Handle deletion of extra rows that are no longer needed
+        if(count($product_id) < count($lims_product_sale_data)) {
+            // Get all existing rows for this sale
+            $all_existing_rows = Product_Sale::where('sale_id', (int)$id)->orderBy('id')->get();
+            
+            // Delete rows that are beyond the number of submitted products
+            $rows_to_delete = $all_existing_rows->slice(count($product_id));
+            
+            foreach($rows_to_delete as $row_to_delete) {
+                $row_to_delete->delete();
+            }
+        }
+        
         $lims_sale_data->update($data);
         $lims_customer_data = Customer::find($data['customer_id']);
         $message = 'Sale updated successfully';
@@ -2706,7 +2877,8 @@ class SaleController extends Controller
                             ['warehouse_id', $lims_sale_data->warehouse_id]
                         ])->first();
 
-                        $lims_product_batch_data->qty -= $product_sale->qty;
+                        // Add quantity back to batch (this is a deletion/return operation)
+                        $lims_product_batch_data->qty += $product_sale->qty;
                         $lims_product_batch_data->save();
                     }
                     else {
@@ -2833,7 +3005,8 @@ class SaleController extends Controller
                         ['warehouse_id', $lims_sale_data->warehouse_id]
                     ])->first();
 
-                    $lims_product_batch_data->qty -= $product_sale->qty;
+                    // Add quantity back to batch (this is a return/refund operation)
+                    $lims_product_batch_data->qty += $product_sale->qty;
                     $lims_product_batch_data->save();
                 }
                 else {

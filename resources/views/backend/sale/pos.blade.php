@@ -2329,12 +2329,30 @@ $.get('sales/getproduct/' + id, function(data) {
     product_warehouse_price = data[7];
     batch_no = data[8];
     product_batch_id = data[9];
+    expired_date = data[10];
     is_embeded = data[11];
     $.each(product_code, function(index) {
-        if(is_embeded[index])
-            lims_product_array.push(product_code[index] + ' (' + product_name[index] + ')|' + is_embeded[index]);
-        else
-            lims_product_array.push(product_code[index] + ' (' + product_name[index] + ')');
+        var display_name = product_name[index];
+        var data_string = '';
+        
+        // Add batch information to display name
+        if(batch_no[index] && batch_no[index] !== null) {
+            display_name += ' - Batch: ' + batch_no[index];
+            if(expired_date[index]) {
+                display_name += ' (Exp: ' + expired_date[index] + ')';
+            }
+        } else {
+            display_name += ' - No Batch';
+        }
+        
+        // Create data string with batch info
+        if(is_embeded[index]) {
+            data_string = product_code[index] + ' (' + display_name + ')|' + is_embeded[index] + '|' + (product_batch_id[index] || '') + '|' + index;
+        } else {
+            data_string = product_code[index] + ' (' + display_name + ')|' + (product_batch_id[index] || '') + '|' + index;
+        }
+        
+        lims_product_array.push(data_string);
     });
 });
 
@@ -2519,12 +2537,30 @@ $('select[name="warehouse_id"]').on('change', function() {
         product_warehouse_price = data[7];
         batch_no = data[8];
         product_batch_id = data[9];
+        expired_date = data[10];
         is_embeded = data[11];
         $.each(product_code, function(index) {
-            if(is_embeded[index])
-                lims_product_array.push(product_code[index] + ' (' + product_name[index] + ')|' + is_embeded[index]);
-            else
-                lims_product_array.push(product_code[index] + ' (' + product_name[index] + ')');
+            var display_name = product_name[index];
+            var data_string = '';
+            
+            // Add batch information to display name
+            if(batch_no[index] && batch_no[index] !== null) {
+                display_name += ' - Batch: ' + batch_no[index];
+                if(expired_date[index]) {
+                    display_name += ' (Exp: ' + expired_date[index] + ')';
+                }
+            } else {
+                display_name += ' - No Batch';
+            }
+            
+            // Create data string with batch info
+            if(is_embeded[index]) {
+                data_string = product_code[index] + ' (' + display_name + ')|' + is_embeded[index] + '|' + (product_batch_id[index] || '') + '|' + index;
+            } else {
+                data_string = product_code[index] + ' (' + display_name + ')|' + (product_batch_id[index] || '') + '|' + index;
+            }
+            
+            lims_product_array.push(data_string);
         });
     });
 
@@ -3049,29 +3085,51 @@ function confirmDelete() {
 
 function productSearch(data) {
     var product_info = data.split(" ");
-    var product_code = product_info[0];
+    var code = product_info[0];
     var pre_qty = 0;
+    var batch_id = '';
+    var array_index = '';
+    
+    // Extract batch information from the selected data
+    if(data.includes('|')) {
+        var parts = data.split('|');
+        
+        if(parts.length >= 3) {
+            batch_id = parts[parts.length - 2]; // batch_id
+            array_index = parts[parts.length - 1]; // array index
+        }
+    }
+    
+    // Check if this exact product with same batch already exists in cart
+    var found_existing = false;
     $(".product-code").each(function(i) {
-        if ($(this).val() == product_code) {
-            rowindex = i;
-            pre_qty = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val();
+        if ($(this).val() == code) {
+            var existing_batch_id = $(this).closest('tr').find('.product-batch-id').val() || '';
+            
+            // Check if it's the same batch (or both are non-batched)
+            if(batch_id == existing_batch_id) {
+                rowindex = i;
+                pre_qty = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val();
+                found_existing = true;
+                return false; // break the loop
+            }
         }
     });
-    data += '?'+$('#customer_id').val()+'?'+(parseFloat(pre_qty) + 1);
+    
+    // Create clean search string - only send product code and basic info
+    var search_data = code + '?' + $('#customer_id').val() + '?' + (parseFloat(pre_qty) + 1) + '?' + array_index;
+    var ajax_url = '{{ route("product_sale.search") }}';
     $.ajax({
         type: 'GET',
-        url: 'sales/lims_product_search',
+        url: ajax_url,
         data: {
-            data: data
+            data: search_data
         },
         success: function(data) {
-            console.log(pre_qty);
+            
             var flag = 1;
             if (pre_qty > 0) {
-                /*if(pre_qty)
-                    var qty = parseFloat(pre_qty) + data[15];
-                else*/
-                    var qty = data[15];
+                var qty = data[15];
                 $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val(qty);
                 pos = product_code.indexOf(data[1]);
                 if(!data[11] && product_warehouse_price[pos]) {
@@ -3089,6 +3147,14 @@ function productSearch(data) {
             if(flag){
                 addNewProduct(data);
             }
+        },
+        error: function(xhr, status, error) {
+            if(xhr.status === 404) {
+                alert('Product not found. Please check the product code and try again.');
+            } else {
+                alert('Error searching for product: ' + error);
+            }
+            $("input[name='product_code_name']").val('');
         }
     });
 }
@@ -3096,14 +3162,23 @@ function productSearch(data) {
 function addNewProduct(data){
     var newRow = $("<tr>");
     var cols = '';
+    var arrayIndex = data[17];
+    pos = arrayIndex ? parseInt(arrayIndex) : product_code.indexOf(data[1]);
     temp_unit_name = (data[6]).split(',');
-    pos = product_code.indexOf(data[1]);
+    
+    
     cols += '<td class="col-sm-2 product-title"><button type="button" class="edit-product btn btn-link" data-toggle="modal" data-target="#editModal"><span style="margin-left: -19px; white-space: break-spaces;"><strong>' + data[0] + '</strong></span></button><br>' + data[1] + '<p>In Stock: <span class="in-stock"></span></p></td>';
     if(data[12]) {
-        cols += '<td class="col-sm-2"><input type="text" class="form-control batch-no" value="'+batch_no[pos]+'" required/> <input type="hidden" class="product-batch-id" name="product_batch_id[]" value="'+product_batch_id[pos]+'"/> </td>';
+        // Batched product: Auto-fill with actual batch number and disable input
+        var batchNo = (pos >= 0 && batch_no[pos]) ? batch_no[pos] : '';
+        var batchId = (pos >= 0 && product_batch_id[pos]) ? product_batch_id[pos] : '';
+        var expiredDate = (pos >= 0 && expired_date[pos]) ? expired_date[pos] : 'N/A';
+        
+        cols += '<td class="col-sm-2"><input type="text" class="form-control batch-no" value="'+batchNo+'" disabled/> <input type="hidden" class="product-batch-id" name="product_batch_id[]" value="'+batchId+'"/> </td>';
     }
     else {
-        cols += '<td class="col-sm-2"><input type="text" class="form-control batch-no" disabled/> <input type="hidden" class="product-batch-id" name="product_batch_id[]"/> </td>';
+        // Non-batched product: Auto-fill with "N/A" and disable input
+        cols += '<td class="col-sm-2"><input type="text" class="form-control batch-no" value="N/A" disabled/> <input type="hidden" class="product-batch-id" name="product_batch_id[]"/> </td>';
     }
     cols += '<td class="col-sm-2 product-price"></td>';
     cols += '<td class="col-sm-3"><div class="input-group"><span class="input-group-btn"><button type="button" class="btn btn-default minus"><span class="dripicons-minus"></span></button></span><input type="text" name="qty[]" class="form-control qty numkey input-number" step="any" value="'+data[15]+'" required><span class="input-group-btn"><button type="button" class="btn btn-default plus"><span class="dripicons-plus"></span></button></span></div></td>';
@@ -3123,6 +3198,18 @@ function addNewProduct(data){
     cols += '<input type="hidden" class="sale-unit-operation-value" value="'+data[8]+'" />';
     cols += '<input type="hidden" class="subtotal-value" name="subtotal[]" />';
     cols += '<input type="hidden" class="imei-number" name="imei_number[]" />';
+    
+    // Add batch-related hidden inputs
+    if(data[12]) {
+        // Batched product: Store actual batch ID and is_batch flag
+        var batchId = (pos >= 0 && product_batch_id[pos]) ? product_batch_id[pos] : '';
+        cols += '<input type="hidden" class="batch-id" name="batch_id[]" value="' + batchId + '"/>';
+        cols += '<input type="hidden" class="is-batch" name="is_batch[]" value="1"/>';
+    } else {
+        // Non-batched product: Store empty batch ID and is_batch = 0
+        cols += '<input type="hidden" class="batch-id" name="batch_id[]" value=""/>';
+        cols += '<input type="hidden" class="is-batch" name="is_batch[]" value="0"/>';
+    }
 
     newRow.append(cols);
     if(keyboard_active==1) {
@@ -3304,7 +3391,22 @@ function checkDiscount(qty, flag) {
 
 function checkQuantity(sale_qty, flag) {
     var row_product_code = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.product-code').val();
+    var row_batch_id = $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.batch-id').val();
+    
+    // For batched products, find the specific batch position
+    // For non-batched products, use the first occurrence
     pos = product_code.indexOf(row_product_code);
+    if(row_batch_id && row_batch_id !== '') {
+        // Find the correct position for this specific batch
+        for(var i = 0; i < product_code.length; i++) {
+            if(product_code[i] === row_product_code && product_batch_id[i] == row_batch_id) {
+                pos = i;
+                break;
+            }
+        }
+    }
+    
+    
     $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ')').find('.in-stock').text(product_qty[pos]);
     localStorageQty[rowindex] = sale_qty;
     localStorage.setItem("localStorageQty", localStorageQty);

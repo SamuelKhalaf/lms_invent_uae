@@ -513,6 +513,16 @@
                 var flag = 1;
                 $(".product-code").each(function(i) {
                     if ($(this).val() == data[1]) {
+                        // Check if this is a batched product
+                        if(data[10]) { // is_batch = 1
+                            // For batched products, check if batch number is filled
+                            var batchNo = $('table.order-list tbody tr:nth-child(' + (i + 1) + ') .batch-no').val();
+                            if(batchNo && batchNo.trim() !== '') {
+                                // Batch number is filled, don't increase quantity - add as new row
+                                return; // Continue to next iteration
+                            }
+                        }
+                        // For non-batched products or batched products with empty batch number
                         rowindex = i;
                         var qty = parseFloat($('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val()) + 1;
                         $('table.order-list tbody tr:nth-child(' + (rowindex + 1) + ') .qty').val(qty);
