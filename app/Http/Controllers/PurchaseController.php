@@ -1207,6 +1207,11 @@ class PurchaseController extends Controller
         $role = Role::find(Auth::user()->role_id);
         if($role->hasPermissionTo('purchases-delete')){
             $lims_purchase_data = Purchase::find($id);
+            
+            // Check if purchase exists
+            if (!$lims_purchase_data) {
+                return redirect('purchases')->with('not_permitted', 'Purchase not found');
+            }
             $lims_product_purchase_data = ProductPurchase::where('purchase_id', $id)->get();
             $lims_payment_data = Payment::where('purchase_id', $id)->get();
             foreach ($lims_product_purchase_data as $product_purchase_data) {
@@ -1279,5 +1284,26 @@ class PurchaseController extends Controller
             return redirect('purchases')->with('not_permitted', 'Purchase deleted successfully');;
         }
         
+    }
+
+    public function checkBatchNumber(Request $request)
+    {
+        $product_id = $request->product_id;
+        $batch_no = $request->batch_no;
+        $exclude_batch_id = $request->exclude_batch_id; // For edit mode, exclude current batch
+        
+        $query = \App\ProductBatch::where([
+            ['product_id', $product_id],
+            ['batch_no', $batch_no]
+        ]);
+        
+        // Exclude current batch in edit mode
+        if($exclude_batch_id) {
+            $query->where('id', '!=', $exclude_batch_id);
+        }
+        
+        $exists = $query->exists();
+        
+        return response()->json(['exists' => $exists]);
     }
 }

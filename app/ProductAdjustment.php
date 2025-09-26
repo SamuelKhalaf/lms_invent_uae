@@ -8,6 +8,6 @@ class ProductAdjustment extends Model
 {
     protected $table = 'product_adjustments';
     protected $fillable =[
-        "adjustment_id", "product_id", "variant_id", "qty", "action"
+        "adjustment_id", "product_id", "variant_id", "product_batch_id", "qty", "action"
     ];
 }

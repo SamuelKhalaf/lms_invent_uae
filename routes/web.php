@@ -161,6 +161,7 @@ Route::group(['middleware' => ['common', 'auth', 'active']], function() {
 	Route::post('purchases/purchase-data', 'PurchaseController@purchaseData')->name('purchases.data');
 	Route::get('purchases/product_purchase/{id}','PurchaseController@productPurchaseData');
 	Route::get('purchases/lims_product_search', 'PurchaseController@limsProductSearch')->name('product_purchase.search');
+	Route::post('purchases/check_batch_number', 'PurchaseController@checkBatchNumber')->name('purchase.check_batch_number');
 	Route::post('purchases/add_payment', 'PurchaseController@addPayment')->name('purchase.add-payment');
 	Route::get('purchases/getpayment/{id}', 'PurchaseController@getPayment')->name('purchase.get-payment');
 	Route::post('purchases/updatepayment', 'PurchaseController@updatePayment')->name('purchase.update-payment');
@@ -181,6 +182,7 @@ Route::group(['middleware' => ['common', 'auth', 'active']], function() {
 
 	Route::get('qty_adjustment/getproduct/{id}', 'AdjustmentController@getProduct')->name('adjustment.getproduct');
 	Route::get('qty_adjustment/lims_product_search', 'AdjustmentController@limsProductSearch')->name('product_adjustment.search');
+	Route::post('qty_adjustment/check_batch_number', 'AdjustmentController@checkBatchNumber')->name('adjustment.check_batch_number');
 	Route::post('qty_adjustment/deletebyselection', 'AdjustmentController@deleteBySelection');
 	Route::resource('qty_adjustment', 'AdjustmentController');
 

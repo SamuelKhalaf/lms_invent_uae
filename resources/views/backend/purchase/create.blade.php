@@ -548,7 +548,7 @@
                     else
                         cols += '<td class="recieved-product-qty d-none"><input type="number" class="form-control recieved" name="recieved[]" value="0" step="any"/></td>';
                     if(data[10]) {
-                        cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" required/></td>';
+                        cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" data-product-id="' + data[9] + '" required/></td>';
                         cols += '<td><input type="text" class="form-control expired-date" name="expired_date[]" required/></td>';
                     }
                     else {
@@ -793,6 +793,50 @@
         $("#submit-btn").prop('disabled', true);
     }
  });
+
+// Batch number validation
+$(document).on('blur', '.batch-no', function() {
+    var batchInput = $(this);
+    var batchNo = batchInput.val().trim();
+    var productId = batchInput.data('product-id');
+    
+    // Skip validation if already validated or if input is disabled
+    if (batchNo && productId && !batchInput.prop('disabled') && !batchInput.data('validated')) {
+        // Mark as being validated to prevent multiple requests
+        batchInput.data('validated', true);
+        
+        $.ajax({
+            url: '{{ route("purchase.check_batch_number") }}',
+            type: 'POST',
+            data: {
+                product_id: productId,
+                batch_no: batchNo,
+                _token: $('meta[name="csrf-token"]').attr('content')
+            },
+            success: function(response) {
+                if (response.exists) {
+                    alert('Batch number "' + batchNo + '" already exists for this product!');
+                    // Clear the input and reset validation flag
+                    batchInput.val('').data('validated', false);
+                    batchInput.focus();
+                } else {
+                    // Reset validation flag on successful validation
+                    batchInput.data('validated', false);
+                }
+            },
+            error: function() {
+                console.log('Error checking batch number');
+                // Reset validation flag on error
+                batchInput.data('validated', false);
+            }
+        });
+    }
+});
+
+// Reset validation flag when user starts typing
+$(document).on('input', '.batch-no', function() {
+    $(this).data('validated', false);
+});
 </script>
 
 <script type="text/javascript" src="https://js.stripe.com/v3/"></script>

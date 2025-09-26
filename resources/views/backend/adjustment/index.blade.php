@@ -184,11 +184,39 @@
                                 data:{
                                     adjustmentIdArray: adjustment_id
                                 },
-                                success:function(data){
-                                    alert(data);
+                                success:function(response){
+                                    // Handle both string and JSON responses
+                                    if (typeof response === 'string') {
+                                        alert(response);
+                                    } else if (response.message) {
+                                        alert(response.message);
+                                    } else {
+                                        alert('Adjustments deleted successfully');
+                                    }
+                                    // Only remove rows if deletion was successful
+                                    dt.rows({ page: 'current', selected: true }).remove().draw(false);
+                                },
+                                error:function(xhr, status, error){
+                                    // Handle error responses
+                                    var errorMessage = 'An error occurred while deleting adjustments.';
+                                    
+                                    if (xhr.responseJSON && xhr.responseJSON.message) {
+                                        errorMessage = xhr.responseJSON.message;
+                                    } else if (xhr.responseText) {
+                                        try {
+                                            var response = JSON.parse(xhr.responseText);
+                                            if (response.message) {
+                                                errorMessage = response.message;
+                                            }
+                                        } catch (e) {
+                                            errorMessage = xhr.responseText;
+                                        }
+                                    }
+                                    
+                                    alert('Error: ' + errorMessage);
+                                    console.error('Delete error:', xhr.responseText);
                                 }
                             });
-                            dt.rows({ page: 'current', selected: true }).remove().draw(false);
                         }
                         else if(!adjustment_id.length)
                             alert('Nothing is selected!');

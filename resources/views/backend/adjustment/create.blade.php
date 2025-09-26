@@ -205,6 +205,50 @@
 	    }
 	});
 
+	// Batch number validation
+	$(document).on('blur', '.batch-no', function() {
+		var batchInput = $(this);
+		var batchNo = batchInput.val().trim();
+		var productId = batchInput.data('product-id');
+		
+		// Skip validation if already validated or if input is disabled
+		if (batchNo && productId && !batchInput.prop('disabled') && !batchInput.data('validated')) {
+			// Mark as being validated to prevent multiple requests
+			batchInput.data('validated', true);
+			
+			$.ajax({
+				url: '{{ route("adjustment.check_batch_number") }}',
+				type: 'POST',
+				data: {
+					product_id: productId,
+					batch_no: batchNo,
+					_token: $('meta[name="csrf-token"]').attr('content')
+				},
+				success: function(response) {
+					if (response.exists) {
+						alert('Batch number "' + batchNo + '" already exists for this product!');
+						// Clear the input and reset validation flag
+						batchInput.val('').data('validated', false);
+						batchInput.focus();
+					} else {
+						// Reset validation flag on successful validation
+						batchInput.data('validated', false);
+					}
+				},
+				error: function() {
+					console.log('Error checking batch number');
+					// Reset validation flag on error
+					batchInput.data('validated', false);
+				}
+			});
+		}
+	});
+	
+	// Reset validation flag when user starts typing
+	$(document).on('input', '.batch-no', function() {
+		$(this).data('validated', false);
+	});
+
 	$('#adjustment-form').on('submit',function(e){
 	    var rownumber = $('table.order-list tbody tr:last').index();
 	    if (rownumber < 0) {
@@ -214,7 +258,6 @@
         else {
             // Re-enable disabled inputs so they get submitted
             $('.batch-no, .expire-date').prop('disabled', false);
-            console.log('=== ADJUSTMENT CREATE SUBMIT DEBUG ===');
             var product_ids = [];
             var product_codes = [];
             var product_batch_ids = [];
@@ -237,25 +280,7 @@
                 expire_dates.push(expireDate);
                 quantities.push(qty);
                 actions.push(action);
-                console.log('Row ' + index + ':', { 
-                    product_id: pid, 
-                    product_code: pcode, 
-                    product_batch_id: pbatch, 
-                    batch_no: batchNo, 
-                    expire_date: expireDate, 
-                    qty: qty, 
-                    action: action 
-                });
             });
-            console.log('All Product IDs:', product_ids);
-            console.log('All Product Codes:', product_codes);
-            console.log('All Product Batch IDs:', product_batch_ids);
-            console.log('All Batch Numbers:', batch_nos);
-            console.log('All Expire Dates:', expire_dates);
-            console.log('All Quantities:', quantities);
-            console.log('All Actions:', actions);
-            console.log('Warehouse ID:', $('#warehouse_id').val());
-            console.log('Total Rows:', product_ids.length);
         }
 	});
 
@@ -296,7 +321,7 @@
                     cols += '<td>' + product_code[selected_index] + '</td>';
                     var pos = selected_index;
                     cols += '<td>'+
-                        '<input type="number" class="form-control qty" name="qty[]" value="1" required step="any" />'+
+                        '<input type="number" class="form-control qty" name="qty[]" value="1" min="0" required step="any" />'+
                     '</td>';
                     
                     // Batch Number and Expire Date columns
@@ -311,10 +336,10 @@
                             cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="' + (batch_no[pos] || '') + '" disabled /></td>';
                         } else if (hasRecord) {
                             // Empty, editable, not required for existing product without batch
-                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" /></td>';
+                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" data-product-id="' + data[2] + '" /></td>';
                         } else {
                             // Required for new product
-                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" required /></td>';
+                            cols += '<td><input type="text" class="form-control batch-no" name="batch_no[]" value="" required data-product-id="' + data[2] + '" /></td>';
                         }
                     } else {
                         // Disabled for non-batched products
